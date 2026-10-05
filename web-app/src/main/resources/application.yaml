@@ -1,0 +1,74 @@
+spring:
+  application:
+    name: Student-Portal
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}?currentSchema=studentportal
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate.default_schema: studentportal
+  sql:
+    init:
+      mode: always
+      # Scripts must be re-runnable (CREATE ... IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
+      # Spring splits on ';' so DO $$ blocks are not supported.
+      schema-locations:
+        - classpath:schema/init.sql
+        - classpath:schema/users.sql
+
+jwt:
+  secret-key: ${JWT_SECRET_KEY}
+  access-token-validity: ${ACCESS_TOKEN_EXPIRY:86400000}
+  refresh-token-validity: ${REFRESH_TOKEN_EXPIRY:2592000000}
+
+otp:
+  length: 6
+  validity-seconds: 300
+  resend-cooldown-seconds: 30
+  max-per-hour: 5
+  max-verify-attempts: 5
+  dev-mode: ${OTP_DEV_MODE:false}
+
+app:
+  bootstrap-admin:
+    email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    urls:
+      - name: User Management
+        url: /doc/v3/user-management
+    display-request-duration: true
+    doc-expansion: none
+    persist-authorization: true
+
+security:
+  cors:
+    mappings:
+      - path: /**
+        allowed-origins: ${CORS_ALLOWED_ORIGINS}
+        allowed-methods:
+          - "*"
+        allow-credentials: false
+  public-access:
+    - /api/v1/auth/otp/send
+    - /api/v1/auth/otp/verify
+    - /api/v1/auth/signin
+    - /api/v1/auth/refresh
+    - /swagger-ui.html
+    - /swagger-ui/**
+    - /v3/api-docs/**
+    - /doc/v3/**
+    - /error

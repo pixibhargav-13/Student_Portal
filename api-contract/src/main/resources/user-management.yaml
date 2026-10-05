@@ -1,0 +1,758 @@
+openapi: 3.0.3
+info:
+  title: User Management API
+  version: 1.0.0
+  description: |
+    Authentication (mobile OTP for parents/tutors, email + password for admins),
+    the logged-in user's own profile, and admin user management.
+
+    **How to try it in Swagger (local):**
+    1. `POST /api/v1/auth/otp/send` with a 10-digit mobile number. In local/dev mode the OTP
+       comes back in `devOtp` (no SMS is sent).
+    2. `POST /api/v1/auth/otp/verify` with the mobile, OTP and (first time only) `role`.
+    3. Copy `accessToken` and click **Authorize** (top right).
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Authentication
+    description: OTP login/signup, admin password login, token refresh
+  - name: Profile
+    description: The logged-in user's own account
+  - name: User Management
+    description: Admin-only user operations
+
+paths:
+  /api/v1/auth/otp/send:
+    post:
+      tags:
+        - Authentication
+      operationId: sendOtp
+      summary: Send a login OTP to a mobile number
+      description: |
+        Works for both new and existing users. Rate limited per mobile number: one OTP per
+        `resendAfterSeconds`, and a maximum number of OTPs per hour.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendOtpRequest'
+      responses:
+        '200':
+          description: OTP sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendOtpResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/auth/otp/verify:
+    post:
+      tags:
+        - Authentication
+      operationId: verifyOtp
+      summary: Verify OTP and log in (creates the account on first login)
+      description: |
+        If no account exists for the mobile number, one is created with the given `role`
+        (PARENT or TUTOR) and `newUser` is true in the response. `role` is ignored for existing
+        users.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyOtpRequest'
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/v1/auth/signin:
+    post:
+      tags:
+        - Authentication
+      operationId: signIn
+      summary: Sign in with email and password (admin panel)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Authentication
+      operationId: refreshToken
+      summary: Get a new access token using a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: New access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users/me:
+    get:
+      tags:
+        - Profile
+      operationId: getMyProfile
+      summary: Get the logged-in user's account
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+        - bearerAuth: [ ]
+    put:
+      tags:
+        - Profile
+      operationId: updateMyProfile
+      summary: Update the logged-in user's basic details
+      description: Mobile number and role cannot be changed here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+
+  /api/v1/users:
+    get:
+      tags:
+        - User Management
+      operationId: getAllUsers
+      summary: List users with search, filters and pagination (Admin only)
+      parameters:
+        - $ref: '#/components/parameters/pageParam'
+        - $ref: '#/components/parameters/sizeParam'
+        - name: search
+          in: query
+          description: Matches name, mobile number or email (case-insensitive, partial)
+          required: false
+          schema:
+            type: string
+        - name: role
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/UserRole'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+        - $ref: '#/components/parameters/sortByParam'
+        - $ref: '#/components/parameters/directionParam'
+      responses:
+        '200':
+          description: Page of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedResultUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      security:
+        - bearerAuth: [ ]
+    post:
+      tags:
+        - User Management
+      operationId: createUser
+      summary: Create a user of any role (Admin only)
+      description: |
+        Admins need `email` + `password` (they log in via /auth/signin).
+        Parents and tutors need `mobileNumber` (they log in via OTP).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+
+  /api/v1/users/summary:
+    get:
+      tags:
+        - User Management
+      operationId: getUserSummary
+      summary: User counts for the admin dashboard (Admin only)
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      security:
+        - bearerAuth: [ ]
+
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/userIdParam'
+    get:
+      tags:
+        - User Management
+      operationId: getUserById
+      summary: Get a user by ID (Admin only)
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - bearerAuth: [ ]
+    put:
+      tags:
+        - User Management
+      operationId: updateUser
+      summary: Edit a user's details (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUpdateUserRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - bearerAuth: [ ]
+    delete:
+      tags:
+        - User Management
+      operationId: deleteUser
+      summary: Delete a user (Admin only)
+      description: |
+        Soft delete - the account is marked DELETED and can no longer log in; its records stay
+        for bookings/payments history. Admins cannot delete themselves.
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - bearerAuth: [ ]
+
+  /api/v1/users/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/userIdParam'
+    patch:
+      tags:
+        - User Management
+      operationId: updateUserStatus
+      summary: Block or unblock a user (Admin only)
+      description: Blocked users are logged out on their next request and cannot log in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserStatusRequest'
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - bearerAuth: [ ]
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    userIdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    pageParam:
+      name: page
+      in: query
+      description: Page number starting from 0
+      required: false
+      schema:
+        type: integer
+        default: 0
+    sizeParam:
+      name: size
+      in: query
+      description: Records per page (max 100)
+      required: false
+      schema:
+        type: integer
+        default: 10
+    directionParam:
+      name: direction
+      in: query
+      description: Sort direction
+      required: false
+      schema:
+        type: string
+        enum: [ ASC, DESC ]
+    sortByParam:
+      name: sortBy
+      in: query
+      description: Field to sort by
+      required: false
+      schema:
+        type: string
+        enum: [ createdAt, lastUpdatedAt, fullName, lastLoginAt ]
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Not logged in, bad credentials/OTP, or expired token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Logged in but not allowed (wrong role, blocked or deleted account)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Duplicate mobile number or email
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Rate limit hit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    MobileNumber:
+      type: string
+      description: 10-digit Indian mobile number without +91
+      pattern: '^[6-9][0-9]{9}$'
+      example: '9876543210'
+
+    SendOtpRequest:
+      type: object
+      required:
+        - mobileNumber
+      properties:
+        mobileNumber:
+          $ref: '#/components/schemas/MobileNumber'
+
+    SendOtpResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        expiresInSeconds:
+          type: integer
+        resendAfterSeconds:
+          type: integer
+        devOtp:
+          type: string
+          description: Only present when the server runs in OTP dev mode (local). Never in production.
+
+    VerifyOtpRequest:
+      type: object
+      required:
+        - mobileNumber
+        - otp
+      properties:
+        mobileNumber:
+          $ref: '#/components/schemas/MobileNumber'
+        otp:
+          type: string
+          pattern: '^[0-9]{6}$'
+          example: '123456'
+        role:
+          $ref: '#/components/schemas/SignupRole'
+        fullName:
+          type: string
+          maxLength: 150
+          description: Optional, used only when the account is created
+
+    SignInRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: 'JWT, send as header `Authorization: Bearer <token>`'
+        refreshToken:
+          type: string
+        accessTokenExpiresIn:
+          type: integer
+          format: int64
+          description: Seconds until the access token expires
+        newUser:
+          type: boolean
+          description: True when this OTP login just created the account (show onboarding)
+        user:
+          $ref: '#/components/schemas/User'
+
+    UpdateProfileRequest:
+      type: object
+      required:
+        - fullName
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 150
+        email:
+          type: string
+          format: email
+        gender:
+          $ref: '#/components/schemas/Gender'
+        preferredLanguage:
+          $ref: '#/components/schemas/Language'
+        city:
+          type: string
+          maxLength: 100
+        pincode:
+          type: string
+          pattern: '^[1-9][0-9]{5}$'
+        profilePhotoUrl:
+          type: string
+          maxLength: 500
+
+    CreateUserRequest:
+      type: object
+      required:
+        - fullName
+        - role
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 150
+        role:
+          $ref: '#/components/schemas/UserRole'
+        mobileNumber:
+          $ref: '#/components/schemas/MobileNumber'
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          description: Required for ADMIN
+        gender:
+          $ref: '#/components/schemas/Gender'
+        city:
+          type: string
+          maxLength: 100
+        pincode:
+          type: string
+          pattern: '^[1-9][0-9]{5}$'
+
+    AdminUpdateUserRequest:
+      type: object
+      required:
+        - fullName
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 150
+        mobileNumber:
+          $ref: '#/components/schemas/MobileNumber'
+        email:
+          type: string
+          format: email
+        gender:
+          $ref: '#/components/schemas/Gender'
+        preferredLanguage:
+          $ref: '#/components/schemas/Language'
+        city:
+          type: string
+          maxLength: 100
+        pincode:
+          type: string
+          pattern: '^[1-9][0-9]{5}$'
+        profilePhotoUrl:
+          type: string
+          maxLength: 500
+
+    UpdateUserStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          $ref: '#/components/schemas/ManageableUserStatus'
+        reason:
+          type: string
+          maxLength: 500
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        fullName:
+          type: string
+        mobileNumber:
+          type: string
+        email:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        statusReason:
+          type: string
+        gender:
+          $ref: '#/components/schemas/Gender'
+        preferredLanguage:
+          $ref: '#/components/schemas/Language'
+        city:
+          type: string
+        pincode:
+          type: string
+        profilePhotoUrl:
+          type: string
+        mobileVerified:
+          type: boolean
+        profileComplete:
+          type: boolean
+          description: False until the user has saved a name (use it to route to onboarding)
+        lastLoginAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    UserSummary:
+      type: object
+      properties:
+        totalUsers:
+          type: integer
+          format: int64
+        parents:
+          type: integer
+          format: int64
+        tutors:
+          type: integer
+          format: int64
+        admins:
+          type: integer
+          format: int64
+        blocked:
+          type: integer
+          format: int64
+        newThisWeek:
+          type: integer
+          format: int64
+
+    UserRole:
+      type: string
+      enum: [ ADMIN, PARENT, TUTOR ]
+    SignupRole:
+      type: string
+      description: Role picked on the signup screen (admins are created by other admins)
+      enum: [ PARENT, TUTOR ]
+    UserStatus:
+      type: string
+      enum: [ ACTIVE, BLOCKED, DELETED ]
+    ManageableUserStatus:
+      type: string
+      enum: [ ACTIVE, BLOCKED ]
+    Gender:
+      type: string
+      enum: [ MALE, FEMALE, OTHER ]
+    Language:
+      type: string
+      enum: [ ENGLISH, HINDI, GUJARATI ]
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+        detail:
+          type: object
+
+    PaginatedResultUser:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        empty:
+          type: boolean
+        last:
+          type: boolean
+        first:
+          type: boolean
+        totalPages:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+        size:
+          type: integer
+        page:
+          type: integer
